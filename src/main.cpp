@@ -21,7 +21,7 @@
 ***************************************************************************************************************/
 #include <SPI.h>
 #include <SD.h>
-#define CS_SD 5
+#define CS_SD 4 
 /*******************************************************************************************************
  * Libreria para manejar archivos JSON
 ***************************************************************************************************************/
@@ -30,8 +30,8 @@
  * Libreria para manejar modulo RFID-RC522
 ***************************************************************************************************************/
 #include <MFRC522.h>
-#define CS_RFID 4
-#define RST_RFID 17
+#define CS_RFID 5
+#define RST_RFID 2
 //Creamos una intancia de la clase MFRC522
 MFRC522 rfid(CS_RFID,RST_RFID);
 /*******************************************************************************************************
@@ -121,58 +121,138 @@ void initDisplay(){
   delay(500);
   Serial.println("Pantalla lista");
   display.clearDisplay();
-  display.setTextColor(WHITE); 
-  display.clearDisplay();
+  display.setTextColor(WHITE);
+  display.invertDisplay(true);
   display.drawBitmap(0, 0, image_data_Logosirsa_OLED, 128, 68, 1);
   display.display();
 }
 void messageUser(JsonDocument& doc,int index,String msg){
+
   display.clearDisplay();
+  delay(500);
+  display.setTextColor(WHITE);
+  display.invertDisplay(false);
   display.setCursor(5,5);
   display.print(msg);
-  display.setCursor(5,15);
+  display.setCursor(5,20);
   display.print(doc["personal"][index]["nombre"].as<String>());
   display.display();
+  delay(2000);
+  display.clearDisplay();
+  delay(100);
+  display.invertDisplay(true);
+  display.drawBitmap(0, 0, image_data_Logosirsa_OLED, 128, 68, 1);
+  display.display();
+
+
+} 
+void messageError(){
+   display.clearDisplay();
+  delay(500);
+  display.setTextColor(WHITE);
+  display.invertDisplay(false);
+  display.setCursor(5,5);
+  display.print("UID NO ENCONTRADO");
+  display.setCursor(5,20);
+  display.print("No se reconoce");
+  display.display();
+  delay(2000);
+  display.clearDisplay();
+  delay(100);
+  display.invertDisplay(true);
+  display.drawBitmap(0, 0, image_data_Logosirsa_OLED, 128, 68, 1);
+  display.display();
 }
+
 /*******************************************************************************************************
  * PARA CONTROLAR RTC-DS3231
 ***************************************************************************************************************/
 #include "RTClib.h"
 #include <WiFi.h>
 #include "time.h"
-
 const char *ntpServer = "time.google.com";
 const long gmtOffset_sec = 5;
 const int daylightOffset_sec = 3600;
 unsigned long epochTime;
-
+RTC_DS3231 rtc;
 RTC_DATA_ATTR DateTime ultimaConexion = DateTime(2023, 1, 1, 0, 0, 0); // Fecha y hora de la última conexión, conservada en la memoria RTC
-
-unsigned long getTime() {
-  time_t now;
+void printLocalTime()
+{
   struct tm timeinfo;
-  if (!getLocalTime(&timeinfo)) {
-    //Serial.println("Failed to obtain time");
-    return(0);
+  if (!getLocalTime(&timeinfo))
+  {
+    Serial.println("Failed to obtain time");
+    return;
   }
-  time(&now);
-  return now;
+  Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
+  Serial.print("Day of week: ");
+  Serial.println(&timeinfo, "%A");
+  Serial.print("Month: ");
+  Serial.println(&timeinfo, "%B");
+  Serial.print("Day of Month: ");
+  Serial.println(&timeinfo, "%d");
+  Serial.print("Year: ");
+  Serial.println(&timeinfo, "%Y");
+  Serial.print("Hour: ");
+  Serial.println(&timeinfo, "%H");
+  Serial.print("Hour (12 hour format): ");
+  Serial.println(&timeinfo, "%I");
+  Serial.print("Minute: ");
+  Serial.println(&timeinfo, "%M");
+  Serial.print("Second: ");
+  Serial.println(&timeinfo, "%S");
+
+  Serial.println("Time variables");
+  char timeHour[3];
+  strftime(timeHour, 3, "%H", &timeinfo);
+  Serial.println(timeHour);
+  char timeWeekDay[10];
+  strftime(timeWeekDay, 10, "%A", &timeinfo);
+  Serial.println(timeWeekDay);
+  Serial.println();
 }
 
-RTC_DS3231 rtc;
+
+/*******************************************************************************************************
+ * CONTROL RGB
+***************************************************************************************************************/
+// Variables para led RGB
+// Definimos los pines que utilizaremos para las salidas de los leds, es necesario revisar el PIOUT del modulo
+// DEFINIMOS LOS PINES
+#define RED 27
+#define GREEN 12
+#define BLUE 14
+// Configuramos los parametros de trabajo del PWM
+const int freq = 5000; // Frecuencia de trabajo del PWM
+const int azul = 0;    // Canal que se utilizara se tienen 16 canales disponibles numerados del 0 al 15
+const int verde = 1;
+const int rojo = 2;
+const int res = 8; // Resolucion de bits para el ciclo útil de trtabajo, con 8 bits podemos utilizar un ciclo desde 0 a 255
+
+void ledrgb(int r, int g, int b)
+{
+
+  // Setear cada pin PWM con el valor de entrada de la función
+  ledcWrite(rojo, 255 - r);
+  ledcWrite(verde, 255 - g);
+  ledcWrite(azul, 255 - b);
+}
 
 
 /*******************************************************************************************************
  * Variables generales
 ***************************************************************************************************************/
-#define PUERTA 2
+#define PUERTA 25
 String uid;
+unsigned long sendDataPrevMillis=0;
 
 void abrir(){
+  ledrgb(0, 100, 100);
   Serial.println("ABRIENDO_____");
   digitalWrite(PUERTA,HIGH);
   delay(1500);
   digitalWrite(PUERTA,LOW);
+  ledrgb(0, 20, 204);
 }
 
 void printFile(const char* filename) {
@@ -211,16 +291,21 @@ bool searchUser(String uid){
   // Serial.println("INICIANDO");
   int index=0;
   for(JsonObject obj : personal){
-    String uidPersona = obj["uid"];   
+    String uidPersona = obj["uid"];  
+    //Cuando se encuentre que el usuario coincide 
     if(uidPersona == uid){
-      Serial.print("EXITOSO:");
-      Serial.println(uidPersona);
+      Serial.print("UID:");
+      Serial.println(uid);
+      abrir();
+      DateTime now2 = rtc.now();
+      String fecha2 = String(now2.year(), DEC) + "-" + String(now2.month(), DEC) + "-" + String(now2.day(), DEC);
+      String hora2 = String(now2.hour() - 6, DEC) + ":" + String(now2.minute(), DEC) + ":" + String(now2.second(), DEC);
       if(obj["status"]==false){
+        messageUser(doc,index,"Bienvenido");
         doc["personal"][index]["status"]=true;
-        doc["personal"][index]["entrada"]["fecha"]="nueva fecha";
-        doc["personal"][index]["entrada"]["hora"]="15:00:00";
-        Serial.println("Nuevo doc entrada:");
-        serializeJsonPretty(doc,Serial);
+        doc["personal"][index]["entrada"]["fecha"]=fecha2;
+        doc["personal"][index]["entrada"]["hora"]=hora2;
+        // serializeJsonPretty(doc,Serial);
         digitalWrite(CS_SD,LOW);
         SD.remove("/personal.txt");
         File fileUpdate = SD.open("/personal.txt",FILE_WRITE);
@@ -229,13 +314,13 @@ bool searchUser(String uid){
         }
         fileUpdate.close();
         digitalWrite(CS_SD,HIGH);
-        messageUser(doc,index,"Bienvenido");
       }else if(obj["status"]==true){
+        messageUser(doc,index,"Hasta pronto!");
         doc["personal"][index]["status"]=false;
-        doc["personal"][index]["salida"]["fecha"]="fecha salida";
-        doc["personal"][index]["salida"]["hora"]="16:00:00";
-        Serial.println("Nuevo doc Salida y push a registro:");
-        serializeJsonPretty(doc,Serial);
+        doc["personal"][index]["salida"]["fecha"]=fecha2;
+        doc["personal"][index]["salida"]["hora"]=hora2;
+        // Serial.println("Nuevo doc Salida y push a registro:");
+        // serializeJsonPretty(doc,Serial);
         digitalWrite(CS_SD,LOW);
         SD.remove("/personal.txt");
         File fileUpdate = SD.open("/personal.txt",FILE_WRITE);
@@ -251,13 +336,11 @@ bool searchUser(String uid){
           String asunto = doc["personal"][index]["asunto"].as<String>();
           String hora_entrada = doc["personal"][index]["entrada"]["hora"].as<String>();
           String hora_salida = doc["personal"][index]["salida"]["hora"].as<String>();
-
           String registro = fecha + "," + nombre + "," + empresa + "," + asunto + "," + hora_entrada + "," + hora_salida;
           fileRegister.println(registro);
         }
         fileRegister.close();
         digitalWrite(CS_SD,HIGH);
-        messageUser(doc,index,"Hasta pronto!");
       }
       return true;
     }
@@ -265,6 +348,7 @@ bool searchUser(String uid){
   }
   Serial.print("NO ENCONTRADO:");
   Serial.println(uid);
+  messageError();
   return false;
   
 }
@@ -286,36 +370,77 @@ String readRFID(){
 /*******************************************************************************************************
  * CONFIGURACIÓN WIFI
 ***************************************************************************************************************/
-// const char* ssid = "WiGi Gratis";
-// const char* password = "taochuan";
-const char* ssid = "INFINITUM3BAF";
-const char* password = "FzAetH7huj";
+const char* ssid = "DEPTO. TECNICO";
+const char* password = "S1r2492020#";
+// const char* ssid = "INFINITUM3BAF";
+// const char* password = "FzAetH7huj";
 
 void initWiFi() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
   Serial.print("CONECTANDO WiFi ..");
-  while (WiFi.status() != WL_CONNECTED) {
-    Serial.print('.');
-    delay(1000);
-  }
+  delay(2000);
+
+ if(WiFi.status() != WL_CONNECTED) {
+    Serial.println("No se encontro conexion");
+  }else{
   Serial.println(WiFi.localIP());
+  ledrgb(0, 20, 204);
+
+  }
+
+
 }
+void printNow(){
+  DateTime now2 = rtc.now();
+  String fecha2 = String(now2.day(), DEC)+ "-" + String(now2.month(), DEC) + "-" + String(now2.year(), DEC);
+  String hora2 = String(now2.hour() - 6, DEC) + ":" + String(now2.minute(), DEC) + ":" + String(now2.second(), DEC);
+      
+  display.clearDisplay();
+  delay(100);
+  display.invertDisplay(true);
+  display.drawBitmap(0, 0, image_data_Logosirsa_OLED, 128, 68, 1);
+  display.display();
+  display.clearDisplay();
+  delay(3000);
+  display.setTextColor(WHITE);
+  display.invertDisplay(false);
+  display.setCursor(10,2);
+  display.print("Laboratorio");
+  display.setCursor(5,20);
+  display.print("Fecha:");
+  display.setCursor(45,20);
+  display.print(fecha2);
+   display.setCursor(5,50);
+  display.print("Hora:");
+  display.setCursor(45,50);
+  display.print(hora2);
+  display.display(); 
+}
+
 void setup() {                                          
   //Inicializamos el puerto serial
   Serial.begin(9600);
   Serial.println("Iniciando---");
+  //Configuración para lel LED RGB
+  //Inicializamos la salida PWM con la funcion ledcSetup(Canal, frecuencia, resolucion )
+  ledcSetup(azul, freq, res);
+  ledcSetup(verde, freq, res);
+  ledcSetup(rojo, freq, res);
+  // Configuración de los pines PWM (Asignamos a cada pin un canal)
+  ledcAttachPin(RED, rojo);
+  ledcAttachPin(GREEN, verde);
+  ledcAttachPin(BLUE, azul);
+
+  ledrgb(255, 20, 204);
   //INICIALIZACIÓN DE WIFI
   initWiFi();
   //CONFIGURACION DE RELOJ
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-  epochTime = getTime();
-  Serial.print("Epoch Time: ");
-  Serial.println(epochTime);
-  if (! rtc.begin()) {
-    Serial.println("Couldn't find RTC");
-    Serial.flush();
-  }
+  rtc.begin();
+
+  // Configuración mediante NTP
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
   struct tm timeinfo;
   if (!getLocalTime(&timeinfo))
   {
@@ -334,21 +459,12 @@ void setup() {
   {
     rtc.adjust(DateTime(timeinfo.tm_year - 100, timeinfo.tm_mon + 1, timeinfo.tm_mday, timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec));
   }
- 
-  DateTime now = rtc.now();
-  Serial.print(now.year(), DEC);
-    Serial.print('/');
-    Serial.print(now.month(), DEC);
-    Serial.print('/');
-    Serial.print(now.day(), DEC);
-    Serial.print(" (");
-    Serial.print(") ");
-    Serial.print(now.hour(), DEC);
-    Serial.print(':');
-    Serial.print(now.minute(), DEC);
-    Serial.print(':');
-    Serial.print(now.second(), DEC);
-    Serial.println();
+  DateTime now2 = rtc.now();
+  String fecha2 = String(now2.year(), DEC) + "-" + String(now2.month(), DEC) + "-" + String(now2.day(), DEC);
+  String hora2 = String(now2.hour() - 6, DEC) + ":" + String(now2.minute(), DEC) + ":" + String(now2.second(), DEC);
+  Serial.printf("Fecha: %s hora: %s", fecha2, hora2);
+  Serial.println();
+
   
 
   delay(1000);
@@ -368,19 +484,37 @@ void setup() {
   }
   Serial.println("Tarjeta SD inicializada correctamente.");
   digitalWrite(CS_SD,HIGH);
+  //Inicializamos nuestra variable para contar los milisegundos
+  sendDataPrevMillis = millis();
+   ledrgb(0, 20, 204);
+   printNow();
+
+
+  
 
 }
+
+
 void loop() {  
+  if(millis() - sendDataPrevMillis > 60000 || sendDataPrevMillis == 0){
+    sendDataPrevMillis=millis();
+    printNow();
+  }
+  
   if(rfid.PICC_IsNewCardPresent() && rfid.PICC_ReadCardSerial()){
+   ledrgb(10, 100, 100);
+
     uid="";
     uid=readRFID();
     digitalWrite(CS_RFID,HIGH);
     delay(100);
     if(searchUser(uid)){
-      abrir();
+      Serial.println("Se abrio");
     }
     digitalWrite(CS_SD,LOW);
     delay(1000);
+   ledrgb(0, 20, 204);
+
     }   
     
 }
